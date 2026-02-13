@@ -20,7 +20,6 @@
         }
     </style>
 </head>
-
 <body>
 
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
@@ -30,6 +29,7 @@
                 <a href="{{ url_for('admin_orders') }}" class="btn btn-outline-light me-2">📦 Pedidos</a>
                 <a href="{{ url_for('admin_logs') }}" class="btn btn-outline-light me-2">📋 Registros</a>
                 <a href="{{ url_for('admin_charts') }}" class="btn btn-outline-light me-2">📊 Gráficas</a>
+                <a href="{{ url_for('admin_papelera') }}" class="btn btn-outline-light me-2">🗑️ Papelera</a>
                 <a href="{{ url_for('logout') }}" class="btn btn-danger">Cerrar sesión</a>
             </div>
         </div>
@@ -37,6 +37,15 @@
 
     <div class="container mt-4">
         <h2 class="mb-4">Bienvenido, Administrador</h2>
+        {% with messages = get_flashed_messages() %}
+  {% if messages %}
+    <div class="alert alert-warning">
+      {% for message in messages %}
+        <div>{{ message }}</div>
+      {% endfor %}
+    </div>
+  {% endif %}
+{% endwith %}
 
         <!-- Formulario para agregar productos -->
         <div class="card mb-5">
@@ -114,7 +123,7 @@
                         <form method="POST" action="{{ url_for('subir_imagen', id_producto=producto.id_producto) }}"
                             enctype="multipart/form-data" class="mt-2">
                             <div class="input-group">
-                                <input type="file" name="imagen" class="form-control form-control-sm" required>
+                               <input type="file" name="imagen" class="form-control form-control-sm" accept=".jpg,.jpeg,.png,.gif,.webp" required>
                                 <button type="submit" class="btn btn-outline-secondary btn-sm">🖼️ Subir imagen</button>
                             </div>
                         </form>

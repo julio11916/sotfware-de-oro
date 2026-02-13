@@ -79,9 +79,17 @@ def logout():
 def admin_dashboard():
     if session.get('rol') == 'admin':
         productos = pd.read_excel('bd/producto.xlsx')
+
+        # Asegurar que la columna 'eliminado' existe y es booleana
+        if 'eliminado' not in productos.columns:
+            productos['eliminado'] = False
+        productos['eliminado'] = productos['eliminado'].fillna(False).astype(bool)
+
+        productos = productos[productos['eliminado'] == False]
         lista_productos = productos.to_dict(orient='records')
         return render_template('admin_dashboard.html', productos=lista_productos)
     return "Acceso denegado"
+
 
 @app.route('/admin/orders')
 def admin_orders():
@@ -141,7 +149,22 @@ def admin_logs():
 
     registros = pd.read_excel('bd/registros.xlsx') if os.path.exists('bd/registros.xlsx') else pd.DataFrame(columns=['id_registro', 'id_usuario', 'accion', 'fecha_accion'])
 
+    if request.method == 'POST':
+        usuario = request.form.get('usuario')
+        fecha = request.form.get('fecha')
+
+        if usuario:
+            registros = registros[registros['id_usuario'].astype(str).str.contains(usuario, case=False, na=False)]
+        if fecha:
+            registros = registros[registros['fecha_accion'].astype(str).str.startswith(fecha)]
+
+    registros = registros.to_dict(orient='records')
+    return render_template('admin_logs.html', registros=registros)
+
+
 #admin dashboard
+from flask import flash
+
 @app.route('/admin/imagen/<int:id_producto>', methods=['POST'])
 def subir_imagen(id_producto):
     if session.get('rol') != 'admin':
@@ -149,11 +172,24 @@ def subir_imagen(id_producto):
 
     imagen = request.files.get('imagen')
     if imagen:
-        # Asegurar que la carpeta exista
-        carpeta_destino = os.path.join('static', 'img')
-        os.makedirs(carpeta_destino, exist_ok=True)
+        # Validar extensión
+        extensiones_permitidas = {'jpg', 'jpeg', 'png', 'gif', 'webp'}
+        extension = imagen.filename.rsplit('.', 1)[-1].lower()
+        if extension not in extensiones_permitidas:
+            flash("Formato de imagen no permitido. Usa .jpg, .jpeg, .png, .gif o .webp.")
+            return redirect(url_for('admin_dashboard'))
+
+        # Validar tamaño (máx. 2MB)
+        imagen.seek(0, os.SEEK_END)
+        tamaño = imagen.tell()
+        imagen.seek(0)
+        if tamaño > 2 * 1024 * 1024:
+            flash("La imagen excede el tamaño máximo permitido (2MB).")
+            return redirect(url_for('admin_dashboard'))
 
         # Guardar imagen
+        carpeta_destino = os.path.join('static', 'img')
+        os.makedirs(carpeta_destino, exist_ok=True)
         ruta = os.path.join(carpeta_destino, f'producto_{id_producto}.jpg')
         imagen.save(ruta)
 
@@ -164,7 +200,14 @@ def subir_imagen(id_producto):
             productos.at[idx[0], 'imagen_url'] = f'img/producto_{id_producto}.jpg'
             productos.to_excel('bd/producto.xlsx', index=False)
 
+        flash("Imagen subida correctamente.")
+
+    else:
+        flash("No se seleccionó ninguna imagen.")
+
     return redirect(url_for('admin_dashboard'))
+
+
 
 @app.route('/admin/eliminar/<int:id_producto>', methods=['POST'])
 def eliminar_producto(id_producto):
@@ -172,15 +215,116 @@ def eliminar_producto(id_producto):
         return "Acceso denegado"
 
     productos = pd.read_excel('bd/producto.xlsx')
-    productos = productos[productos['id_producto'] != id_producto]
-    productos.to_excel('bd/producto.xlsx', index=False)
+
+    # Asegurar que la columna 'eliminado' existe y es del tipo correcto
+    if 'eliminado' not in productos.columns:
+        productos['eliminado'] = False
+    productos['eliminado'] = productos['eliminado'].astype(object)
+
+    idx = productos[productos['id_producto'] == id_producto].index
+
+    if not idx.empty:
+        productos.at[idx[0], 'eliminado'] = True
+        productos.to_excel('bd/producto.xlsx', index=False)
+
+        # Registrar acción
+        nombre = productos.at[idx[0], 'nombre']
+        if os.path.exists('bd/registros.xlsx'):
+            registros = pd.read_excel('bd/registros.xlsx')
+        else:
+            registros = pd.DataFrame(columns=['id_registro', 'id_usuario', 'accion', 'fecha_accion'])
+
+        nuevo_registro = {
+            'id_registro': len(registros) + 1,
+            'id_usuario': session['usuario'],
+            'accion': f"Eliminó producto: {nombre} (ID {id_producto})",
+            'fecha_accion': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+
+        registros = pd.concat([registros, pd.DataFrame([nuevo_registro])], ignore_index=True)
+        registros.to_excel('bd/registros.xlsx', index=False)
 
     return redirect(url_for('admin_dashboard'))
+
+@app.route('/admin/eliminar_definitivo/<int:id_producto>', methods=['POST'])
+def eliminar_definitivo(id_producto):
+    if session.get('rol') != 'admin':
+        return "Acceso denegado"
 
     productos = pd.read_excel('bd/producto.xlsx')
-    productos = productos[productos['id_producto'] != id_producto]
-    productos.to_excel('bd/producto.xlsx', index=False)
-    return redirect(url_for('admin_dashboard'))
+    idx = productos[productos['id_producto'] == id_producto].index
+
+    if not idx.empty:
+        nombre = productos.at[idx[0], 'nombre']
+        productos = productos.drop(index=idx)
+        productos.to_excel('bd/producto.xlsx', index=False)
+
+        # Registrar acción
+        if os.path.exists('bd/registros.xlsx'):
+            registros = pd.read_excel('bd/registros.xlsx')
+        else:
+            registros = pd.DataFrame(columns=['id_registro', 'id_usuario', 'accion', 'fecha_accion'])
+
+        nuevo_registro = {
+            'id_registro': len(registros) + 1,
+            'id_usuario': session['usuario'],
+            'accion': f"Eliminó definitivamente el producto: {nombre} (ID {id_producto})",
+            'fecha_accion': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+
+        registros = pd.concat([registros, pd.DataFrame([nuevo_registro])], ignore_index=True)
+        registros.to_excel('bd/registros.xlsx', index=False)
+
+    return redirect(url_for('admin_papelera'))
+
+@app.route('/admin/restaurar/<int:id_producto>', methods=['POST'])
+def restaurar_producto(id_producto):
+    if session.get('rol') != 'admin':
+        return "Acceso denegado"
+
+    productos = pd.read_excel('bd/producto.xlsx')
+    idx = productos[productos['id_producto'] == id_producto].index
+
+    if not idx.empty:
+        productos['eliminado'] = productos['eliminado'].astype(object)
+        productos.at[idx[0], 'eliminado'] = False
+        productos.to_excel('bd/producto.xlsx', index=False)
+
+        # Registrar restauración
+        nombre = productos.at[idx[0], 'nombre']
+        if os.path.exists('bd/registros.xlsx'):
+            registros = pd.read_excel('bd/registros.xlsx')
+        else:
+            registros = pd.DataFrame(columns=['id_registro', 'id_usuario', 'accion', 'fecha_accion'])
+
+        nuevo_registro = {
+            'id_registro': len(registros) + 1,
+            'id_usuario': session['usuario'],
+            'accion': f"Restauró producto: {nombre} (ID {id_producto})",
+            'fecha_accion': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+
+        registros = pd.concat([registros, pd.DataFrame([nuevo_registro])], ignore_index=True)
+        registros.to_excel('bd/registros.xlsx', index=False)
+
+    return redirect(url_for('admin_papelera'))
+
+
+@app.route('/admin/papelera')
+def admin_papelera():
+    if session.get('rol') != 'admin':
+        return "Acceso denegado"
+
+    productos = pd.read_excel('bd/producto.xlsx')
+
+    # Asegurar que la columna 'eliminado' existe y es del tipo correcto
+    if 'eliminado' not in productos.columns:
+        productos['eliminado'] = False
+    productos['eliminado'] = productos['eliminado'].astype(object)
+
+    eliminados = productos[productos['eliminado'] == True].to_dict(orient='records')
+    return render_template('admin_papelera.html', productos=eliminados)
+
 
 @app.route('/admin/editar/<int:id_producto>', methods=['GET', 'POST'])
 def editar_producto(id_producto):
@@ -220,9 +364,16 @@ def editar_producto(id_producto):
 def user_dashboard():
     if session.get('rol') == 'normal':
         productos = pd.read_excel('bd/producto.xlsx')
+
+        if 'eliminado' not in productos.columns:
+            productos['eliminado'] = False
+        productos['eliminado'] = productos['eliminado'].fillna(False).astype(bool)
+
+        productos = productos[productos['eliminado'] == False]
         lista_productos = productos.to_dict(orient='records')
         return render_template('user_dashboard.html', productos=lista_productos)
     return "Acceso denegado"
+
 
 @app.route('/add_to_cart/<int:id_producto>', methods=['POST'])
 def add_to_cart(id_producto):
